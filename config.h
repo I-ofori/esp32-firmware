@@ -43,8 +43,8 @@
 #endif
 
 // ---- Analog pins (assumed ADC, 0-3.3V) --------------------------------------
-#define PIN_ADC_CURRENT   34   // ACS712  output C_OUT
-#define PIN_ADC_VOLTAGE   35   // Voltage sensor output V_OUT
+#define PIN_ADC_CURRENT   0   // ACS712  output C_OUT
+#define PIN_ADC_VOLTAGE   1   // Voltage sensor output V_OUT
 
 // ---- DHT22 -------------------------------------------------------------
 #define PIN_DHT_DATA      4    // DHT22 digital DATA pin
@@ -60,7 +60,7 @@
 #define I2C_SCL           22
 
 // ---- SIM800L (GSM) -------------------------------------------------------
-// Used for sending readings and (in GSM-only mode) for time sync.
+// Used for sending readings to the backend.
 #define PIN_GSM_TX        17   // ESP32 TX -> SIM800L RXD
 #define PIN_GSM_RX        16   // ESP32 RX <- SIM800L TXD
 #define GSM_BAUD          9600
@@ -68,6 +68,7 @@
 #define GSM_APN           "internet"     // e.g. "web.vodafone", "internet"
 #define GSM_USER          ""
 #define GSM_PASS          ""
+#define SIM_PIN           ""             // SIM PIN if the card is PIN-locked ("" = none)
 
 // ---- SIM800 SNTP (unused) -------------------------------------------------
 // Time is stamped by the backend on receipt, so the device needs no clock.

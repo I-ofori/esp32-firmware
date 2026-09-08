@@ -166,26 +166,84 @@ bool initGsm() {
   delay(1000);
 
   Serial.println("Initializing SIM800L...");
+  Serial.println("Wake up sequence (autobaud resync)...");
+  sim800l.print("\r\n");
+  delay(2000);
+  sim800l.print("AT\r");
+  delay(1000);
+  sim800l.print("\r\n");
+
   bool alive = false;
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 5; i++) {
     if (gsmCmd("AT", "OK", 3000)) { alive = true; break; }
     delay(1500);
   }
   if (!alive) {
     Serial.println("SIM800L not responding");
+    Serial.println("Power-cycle the module (remove 5V + USB for 30s) and re-test");
     return false;
   }
 
   gsmCmd("ATE0", "OK");              // echo off
-  gsmCmd("AT+CFUN=1", "OK", 8000);   // full functionality
+  gsmCmd("AT+CMEE=2", "OK");         // verbose +CME ERROR text for real cause
 
-  char cmd[64];
+  // ---- SIM + signal diagnostics -------------------------------------------
+  if (!gsmCmd("AT+CPIN?", "+CPIN:", 5000)) {
+    Serial.print("SIM not responding: "); Serial.println(gsmReply);
+    Serial.println("Check SIM is inserted and the holder contacts are clean");
+    return false;
+  }
+  Serial.print("SIM state: "); Serial.println(gsmReply);
+
+  if (gsmReply.indexOf("SIM PIN") >= 0 || gsmReply.indexOf("SIM PUK") >= 0) {
+#ifdef SIM_PIN
+    bool tryUnlock = (strlen(SIM_PIN) > 0);
+#else
+    bool tryUnlock = false;
+#endif
+    if (tryUnlock) {
+      char pinCmd[32];
+      snprintf(pinCmd, sizeof pinCmd, "AT+CPIN=\"%s\"", SIM_PIN);
+      Serial.println("Unlocking SIM with configured PIN...");
+      gsmCmd(pinCmd, "OK", 8000);
+      if (gsmCmd("AT+CPIN?", "+CPIN: READY", 5000)) {
+        Serial.println("SIM unlocked");
+      } else {
+        Serial.println("SIM PIN rejected - check SIM_PIN in config.h");
+        return false;
+      }
+    } else {
+      Serial.println("SIM is PIN-locked - set SIM_PIN in config.h");
+      return false;
+    }
+  }
+
+  gsmCmd("AT+CCID", "OK", 5000);
+  Serial.print("SIM CCID: "); Serial.println(gsmReply);
+
+  gsmCmd("AT+CSQ", "+CSQ:", 5000);
+  Serial.print("Signal: "); Serial.println(gsmReply);
+
+  gsmCmd("AT+CREG?", "+CREG:", 8000);
+  Serial.print("Registration: "); Serial.println(gsmReply);
+
+  gsmCmd("AT+COPS?", "+COPS:", 15000);
+  Serial.print("Operator: "); Serial.println(gsmReply);
+
+  // ---- Full functionality + PDP context -------------------------------------
+  gsmCmd("AT+CFUN=1", "OK", 15000);
+
+  char cmd[80];
   snprintf(cmd, sizeof cmd, "AT+CSTT=\"%s\",\"%s\",\"%s\"", GSM_APN, GSM_USER, GSM_PASS);
-  gsmCmd(cmd, "OK", 8000);
+  if (!gsmCmd(cmd, "OK", 8000)) {
+    Serial.print("APN rejected: "); Serial.println(gsmReply);
+    Serial.println("Set the correct GSM_APN for your carrier");
+    return false;
+  }
 
   gsmCmd("AT+CIICR", "OK", 30000);   // activate GPRS
   if (!gsmCmd("AT+CIFSR", ".", 10000)) {
-    Serial.println("GPRS attach failed - check APN and SIM credit");
+    Serial.println("GPRS attach failed - check APN, signal, SIM credit");
     return false;
   }
   Serial.println("SIM800L GPRS ready");
