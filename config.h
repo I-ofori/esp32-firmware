@@ -65,14 +65,13 @@
 #define PIN_GSM_RX        16   // ESP32 RX <- SIM800L TXD
 #define GSM_BAUD          9600
 #define GSM_UART_NUM      1    // ESP32 hardware UART1 for the SIM800L
-#define GSM_APN           "YOUR_APN"     // e.g. "web.vodafone", "internet"
+#define GSM_APN           "internet"     // e.g. "web.vodafone", "internet"
 #define GSM_USER          ""
 #define GSM_PASS          ""
 
-// ---- SIM800 SNTP (time over GPRS, used when WiFi is disabled) -----------
-#define GSM_NTP_SERVER     "pool.ntp.org"
-#define GSM_NTP_TZ         0     // UTC offset in whole hours (0 = UTC)
-#define GSM_NTP_RESYNC_MIN  360  // re-sync clock every N minutes
+// ---- SIM800 SNTP (unused) -------------------------------------------------
+// Time is stamped by the backend on receipt, so the device needs no clock.
+// (Kept for reference only; remove freely.)
 
 // ---- Feature toggles ---------------------------------------------------------
 #define USE_DHT22          true

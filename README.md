@@ -21,10 +21,19 @@ WiFi is compiled out (`USE_WIFI = false`). Set `USE_GSM = true` (default).
 ```
 Every POST_INTERVAL_SEC seconds:
   read sensors
-  build JSON payload
-  (optional periodic clock re-sync over GPRS)
+  build JSON payload (no timestamp - the server stamps it on receipt)
   POST via SIM800L GSM  ->  GSM_HTTP_ENDPOINT
 ```
+
+### Timestamps: the server owns the clock
+
+The device sends **no `recorded_at`** field — the backend stamps each reading
+with the current server time (`NOW()`) when it arrives. This means:
+
+- No RTC chip and no GSM SNTP sync are needed on the device.
+- No risk of 1970 "epoch" timestamps if a clock sync fails.
+- Timestamps reflect arrival time; for a live 30-second logger this equals
+  measurement time.
 
 ### GSM configuration in `config.h`
 
@@ -38,17 +47,6 @@ Every POST_INTERVAL_SEC seconds:
 | `GSM_APN` | `"YOUR_APN"` | Your carrier's APN (e.g. `web.vodafone`) — **must set** |
 | `GSM_USER` / `GSM_PASS` | `""` | APN username/password if required by carrier |
 | `GSM_HTTP_ENDPOINT` | the Railway URL | **See HTTPS caveat below** |
-| `GSM_NTP_SERVER` | `pool.ntp.org` | SNTP server for clock sync over GPRS |
-| `GSM_NTP_TZ` | `0` | UTC offset in whole hours (0 = UTC) |
-| `GSM_NTP_RESYNC_MIN` | `360` | Re-sync the clock every N minutes |
-
-### Clock sync over GSM
-
-There is no WiFi/NTP. The sketch syncs time with the SIM800's built-in SNTP
-(`AT+CNTP`), then reads the module RTC (`AT+CCLK`) and keeps a millis-adjusted
-epoch locally, re-syncing every `GSM_NTP_RESYNC_MIN`. If the clock cannot be
-synced, `recorded_at` is stamped from the last known time (starts at epoch 0 =
-1970 until the first successful sync).
 
 ### Critical: SIM800L cannot do HTTPS
 

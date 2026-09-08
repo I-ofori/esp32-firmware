@@ -48,27 +48,6 @@ float gTemp = 0.0;
 float gHumidity = 0.0;
 float gIrradiance = 0.0;
 
-// Locally maintained epoch so we never stamp the 1970 epoch even between
-// NTP/SNTP re-syncs.
-time_t gNow = 0;
-unsigned long gNowMillisAtSync = 0;
-
-time_t currentEpoch() {
-  if (gNow == 0) return 0;
-  return gNow + (millis() - gNowMillisAtSync) / 1000UL;
-}
-
-// Convert a tm assumed to be UTC into a Unix epoch without timegm (not on ESP32).
-time_t utcEpoch(const tm* tmv) {
-  int y = tmv->tm_year + 1900;
-  int m = tmv->tm_mon + 1;
-  int a = (14 - m) / 12;
-  int ye = y + 4800 - a;
-  int mo = m + 12 * a - 3;
-  long jdn = tmv->tm_mday + (153 * mo + 2) / 5 + (long)365 * ye + ye / 4 - ye / 100 + ye / 400 - 32045;
-  return (time_t)((jdn - 2440588) * 86400L + (long)tmv->tm_hour * 3600 + (long)tmv->tm_min * 60 + tmv->tm_sec);
-}
-
 void initSensors() {
 #if USE_DHT22
   dht.begin();
@@ -133,17 +112,6 @@ void readSensors() {
     gVoltage, gCurrent, gTemp, gHumidity, gIrradiance);
 }
 
-String isoNow() {
-  time_t now = currentEpoch();
-  struct tm tmv;
-  gmtime_r(&now, &tmv);
-  char buf[28];
-  snprintf(buf, sizeof buf, "%04d-%02d-%02dT%02d:%02d:%02d.000Z",
-           tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
-           tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
-  return String(buf);
-}
-
 String buildPayload() {
   JsonDocument doc;
   doc["device_id"] = DEVICE_ID;
@@ -152,7 +120,6 @@ String buildPayload() {
   doc["temperature"] = gTemp;
   doc["irradiance"] = gIrradiance;
   doc["humidity"] = gHumidity;
-  doc["recorded_at"] = isoNow();
   String payload;
   serializeJson(doc, payload);
   return payload;
@@ -161,7 +128,6 @@ String buildPayload() {
 #if USE_GSM
 // ---- SIM800L helpers --------------------------------------------------------
 String gsmReply = "";
-unsigned long gsmLastReSync = 0;
 
 bool gsmCmd(const char* cmd, const char* expect, unsigned long timeoutMs = 5000) {
   gsmReply = "";
@@ -226,72 +192,10 @@ bool initGsm() {
   return true;
 }
 
-// Sync the local clock over GPRS using the SIM800 SNTP (AT+CNTP) feature.
-bool gsmSyncClock() {
-  char cmd[128];
-  snprintf(cmd, sizeof cmd, "AT+CNTP=\"%s\",%d", GSM_NTP_SERVER, GSM_NTP_TZ);
-  if (!gsmCmd(cmd, "OK", 10000)) return false;
-  if (!gsmCmd("AT+CNTP?", "+CNTP:", 10000)) return false;
-
-  // The module applies SNTP asynchronously, so poll AT+CCLK until the RTC
-  // year is no longer 2000 (i.e. a real time has been fetched).
-  for (int tries = 0; tries < 5; tries++) {
-    if (!gsmCmd("AT+CCLK?", "+CCLK:", 5000)) {
-      delay(3000);
-      continue;
-    }
-    String full = gsmReply;
-    int q1 = full.indexOf('"');
-    int q2 = full.indexOf('"', q1 + 1);
-    if (q1 < 0 || q2 < 0) {
-      delay(3000);
-      continue;
-    }
-    String s = full.substring(q1 + 1, q2);
-
-    int yy, mo, dd, hh, mi, ss;
-    if (sscanf(s.c_str(), "%d/%d/%d,%d:%d:%d", &yy, &mo, &dd, &hh, &mi, &ss) != 6) {
-      delay(3000);
-      continue;
-    }
-    if (yy < 20) {             // still "00" -> SNTP not applied yet
-      delay(3000);
-      continue;
-    }
-
-    tm tmv;
-    tmv.tm_year = 2000 + yy - 1900;
-    tmv.tm_mon = mo - 1;
-    tmv.tm_mday = dd;
-    tmv.tm_hour = hh;
-    tmv.tm_min = mi;
-    tmv.tm_sec = ss;
-    tmv.tm_isdst = 0;
-
-    time_t t = utcEpoch(&tmv);
-    if (t < 1000000000) {
-      delay(3000);
-      continue;
-    }
-    gNow = t;
-    gNowMillisAtSync = millis();
-    Serial.printf("Clock synced over GSM: %s\n", isoNow().c_str());
-    return true;
-  }
-  Serial.println("Clock sync failed (SIM800 SNTP)");
-  return false;
-}
-
 bool postViaGsm(const String& payload) {
   if (!gsmReady) {
     gsmReady = initGsm();
     if (!gsmReady) return false;
-  }
-
-  // Re-sync the clock periodically (SNTP needs the GPRS bearer open).
-  if (gNow == 0 || millis() - gsmLastReSync > (unsigned long)GSM_NTP_RESYNC_MIN * 60000UL) {
-    gsmLastReSync = millis();
-    gsmSyncClock();
   }
 
   String command = "AT+HTTPPARA=\"URL\",\"" + String(GSM_HTTP_ENDPOINT) + "\"";
@@ -310,7 +214,8 @@ bool postViaGsm(const String& payload) {
   }
 #endif
 
-  gsmCmd("AT+HTTPDATA=" + String(payload.length()) + ",30000", "DOWNLOAD", 15000);
+  String dataCmd = "AT+HTTPDATA=" + String(payload.length()) + ",30000";
+  gsmCmd(dataCmd.c_str(), "DOWNLOAD", 15000);
   sim800l.print(payload);
   delay(500);
 
@@ -388,20 +293,6 @@ void connectWiFi() {
     Serial.println("WiFi FAILED - will use GSM if enabled");
   }
 }
-
-void syncNtp() {
-  configTime(0, 0, "pool.ntp.org", "time.google.com");
-  int tries = 0;
-  while (time(nullptr) < 1000000000 && tries < 20) {
-    delay(500);
-    tries++;
-  }
-  if (time(nullptr) >= 1000000000) {
-    gNow = time(nullptr);
-    gNowMillisAtSync = millis();
-    Serial.println("NTP time synced");
-  }
-}
 #endif
 
 void setup() {
@@ -413,13 +304,11 @@ void setup() {
 
 #if USE_GSM
   gsmReady = initGsm();
-  if (gsmReady) gsmSyncClock();
 #endif
 
 #if USE_WIFI
   connectWiFi();
   client.setInsecure();
-  syncNtp();
 #endif
 }
 
